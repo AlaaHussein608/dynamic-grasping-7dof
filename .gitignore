@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / IDE (these caused a 2.7 GB bloat originally)
+.vscode/
+.idea/
+*.vc.db
+.claude/
+
+# Compiled / build artifacts
+*.o
+*.so
+*.a
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
