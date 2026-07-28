@@ -1,13 +1,20 @@
 """
-run_grasping_nmpc_croft.py
-==========================
-Live dynamic-grasping demo: CROFT rendezvous-point planning (bracketed
-root-finding) executed with the ACADOS NMPC tracking controller, then
-wait / gripper-close / lift phases.
+run_grasping_nmpc.py
+====================
+Live dynamic-grasping demo: intercept planning executed with the ACADOS NMPC
+tracking controller, then wait / gripper-close / lift phases.
+
+The intercept planner is chosen on the command line (the two variants were
+previously two near-identical scripts):
+
+    python run_grasping_nmpc.py            # TOPP-RA brute-force scan (default)
+    python run_grasping_nmpc.py toppra
+    python run_grasping_nmpc.py croft      # CROFT rendezvous-point search
 
 Requires the pre-compiled grasping solver (run build_solver.py).
 """
 
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -28,8 +35,23 @@ from shared.gripper import close_gripper
 from shared.acados_mpc import (load_solver, apply_cost_weights,
                                init_warm_start, shift_warm_start,
                                pin_initial_state, set_trajectory_references)
+from dg_common import toppra_segment
+import intercept_planner_toppra
 import intercept_planner_croft
-from intercept_planner_toppra import toppra_segment
+
+# ── Planner selection (CLI) ───────────────────────────────────────────────────
+
+_parser = argparse.ArgumentParser(description=__doc__)
+_parser.add_argument("planner", nargs="?", default="toppra",
+                     choices=["toppra", "croft"],
+                     help="intercept planner (default: toppra)")
+_args = _parser.parse_args()
+
+_PLANNERS  = {"toppra": intercept_planner_toppra,
+              "croft":  intercept_planner_croft}
+planner    = _PLANNERS[_args.planner]
+LIFT_TIME  = 3.0 if _args.planner == "toppra" else 1.2   # final lift duration [s]
+print(f"Intercept planner: {_args.planner}")
 
 SCRIPT_DIR = script_dir(__file__)
 
@@ -80,7 +102,7 @@ nq = 7
 nv = 7
 nu = nv
 
-steps_per_interval = int(h / model.opt.timestep)
+steps_per_interval = int(h / model.opt.timestep)   # inner sim steps per MPC step
 
 # ── Load pre-compiled ACADOS solver ───────────────────────────────────────────
 
@@ -211,8 +233,7 @@ def get_state():
 
 print("Searching for intercept (simulation running) …")
 
-result = intercept_planner_croft.find_intercept(
-    p0, v_ball, q0, verbose=False, get_state=get_state)
+result = planner.find_intercept(p0, v_ball, q0, verbose=False, get_state=get_state)
 
 if result is None:
     quit()
@@ -277,7 +298,7 @@ print(f"Grip achieved: {f:.3f} N")
 # ── Phase 6: lift ─────────────────────────────────────────────────────────────
 
 run_trajectory(0.8, data.qpos[:7].copy(), result['q_pregrasp'], use_ftip=True)
-run_trajectory(1.2, data.qpos[:7].copy(),
+run_trajectory(LIFT_TIME, data.qpos[:7].copy(),
                np.array([0, 0.2, 0, -1.57079, 0, 2.0, -0.7853]), use_ftip=True)
 
 q_ref_final = data.qpos[:7].copy()

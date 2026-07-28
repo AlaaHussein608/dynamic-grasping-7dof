@@ -23,9 +23,9 @@ import frantik as fk
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Asset paths — resolved relative to the repository layout:
-#      ALL_CODES/
-#      ├── refactored/shared/franka_common.py   (this file)
-#      └── xml and meshes/                      (MJCF, URDF, meshes/, assets/)
+#      src/
+#      ├── franka_grasping/shared/franka_common.py   (this file)
+#      └── xml and meshes/                           (MJCF, URDF, meshes/, assets/)
 # ─────────────────────────────────────────────────────────────────────────────
 
 REPO_ROOT  = Path(__file__).resolve().parents[2]

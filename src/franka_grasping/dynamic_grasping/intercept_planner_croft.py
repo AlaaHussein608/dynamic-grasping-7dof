@@ -18,25 +18,14 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pinocchio as pin
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from shared.franka_common import (GRIPPER_CLOSE_TIME, IK_frantik,
-                                  check_workspace, reachable_window,
-                                  compute_grasp_pose, ik_model, ik_data)
-from intercept_planner_toppra import toppra_segment
+from shared.franka_common import GRIPPER_CLOSE_TIME, reachable_window
+from dg_common import ee_pos, toppra_segment, solve_grasp_ik
 
 T_P_SEG  = 0.0179                 # one toppra_segment call (measure_tp.py)
 T_P_EVAL = 2.0 * T_P_SEG          # one candidate evaluation (two segments)
-
-_EE_FRAME = ik_model.getFrameId("gripper")
-
-
-def _ee_pos(q):
-    pin.forwardKinematics(ik_model, ik_data, q)
-    pin.updateFramePlacements(ik_model, ik_data)
-    return ik_data.oMf[_EE_FRAME].translation.copy()
 
 
 def interception_time(r_j, h_j, V_r, V_t):
@@ -88,18 +77,10 @@ def find_intercept(p0, v_ball, q_current,
         p_now, v_now, q_now = read_state()
         p_ball = p_now + v_now * t_cand
 
-        T_pregrasp, T_grasp = compute_grasp_pose(p_ball, v_now, ball_radius)
-        if not (check_workspace(T_pregrasp[:3, 3], base_pos) and
-                check_workspace(T_grasp[:3, 3],    base_pos)):
+        sol = solve_grasp_ik(p_ball, v_now, q_now, ball_radius, base_pos)
+        if sol is None:
             return None
-
-        q_pg, ok = IK_frantik(T_pregrasp, q_now)
-        if not ok:
-            return None
-
-        q_g, ok = IK_frantik(T_grasp, q_pg)
-        if not ok:
-            return None
+        q_pg, q_g, T_pregrasp, T_grasp = sol
 
         traj1 = toppra_segment(q_now, q_pg)
         traj2 = toppra_segment(q_pg,  q_g)
@@ -111,7 +92,7 @@ def find_intercept(p0, v_ball, q_current,
         r_adj   = r_bar + dt_eval                 # Eq. (12), per-eval form
 
         V_t = np.linalg.norm(v_now[:2])
-        V_r = np.linalg.norm(_ee_pos(q_now) - T_grasp[:3, 3]) / r_bar
+        V_r = np.linalg.norm(ee_pos(q_now) - T_grasp[:3, 3]) / r_bar
         y   = interception_time(r_adj, t_cand, V_r, V_t)   # Eq. (7)
 
         return dict(t=t_cand, r_bar=r_bar, r_adj=r_adj, y=y,

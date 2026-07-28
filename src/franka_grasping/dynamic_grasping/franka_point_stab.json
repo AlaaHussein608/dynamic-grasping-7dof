@@ -13,12 +13,12 @@
             "qpoases": ""
         },
         "acados_version": "887c8451f",
-        "code_export_directory": "/home/alaa/ALL_CODES/refractored/dynamic_grasping/franka_point_stab_generated",
+        "code_export_directory": "/home/alaa/thesis/src/franka_grasping/dynamic_grasping/franka_point_stab_generated",
         "cython_include_dirs": [
             "/home/alaa/.local/lib/python3.10/site-packages/numpy/core/include",
             "/usr/include/python3.10"
         ],
-        "json_file": "/home/alaa/ALL_CODES/refractored/dynamic_grasping/franka_point_stab.json",
+        "json_file": "/home/alaa/thesis/src/franka_grasping/dynamic_grasping/franka_point_stab.json",
         "os": "unix",
         "shared_lib_ext": ".so"
     },
@@ -2921,7 +2921,7 @@
         "franka_point_stab_model/franka_point_stab_expl_vde_adj.c"
     ],
     "external_function_files_ocp": [],
-    "hash": "f7c8a7a4d4b848a9598bd968a0e39e89",
+    "hash": "4d666e5e7186628604bd19c80e27535f",
     "model": {
         "con_h_expr": [],
         "con_h_expr_0": [],

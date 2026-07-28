@@ -41,16 +41,27 @@ refactored/
 │   └── tune_mpc_trajectory_tracking.py    (merged N × Q/R sweep)
 │
 └── dynamic_grasping/              intercept and grasp a rolling ball
+    ├── dg_common.py               ← grasping helpers over shared: ee_pos,
+    │                                toppra_segment, solve_grasp_ik, and the
+    │                                shared forward_scan_intercept search
     ├── build_solver.py            (grasping NMPC; --planning for the benchmark)
     ├── build_contractive_solver.py
-    ├── intercept_planner_toppra.py / _quintic.py / _croft.py
+    ├── intercept_planner_toppra.py / _quintic.py   ← thin wrappers over dg_common
+    ├── intercept_planner_croft.py                  ← CROFT rendezvous search
     ├── measure_tp.py              (calibrate CROFT's per-evaluation cost)
-    ├── run_grasping_nmpc_toppra.py / _croft.py   ← NMPC + planner
-    ├── run_grasping_pid_quintic.py               ← PID + quintic planner
-    ├── run_contractive_grasping.py / _v2.py      ← contractive MPC
+    ├── run_grasping_nmpc.py [toppra|croft]         ← NMPC + planner (one script)
+    ├── run_grasping_pid_quintic.py                 ← PID + quintic planner
+    ├── run_contractive_grasping.py / _v2.py        ← contractive MPC
     ├── contraction_gains.py       (folder-local: alpha selection)
-    └── benchmark_grasping_methods.py             (TOPPRA vs CROFT vs contractive)
+    └── benchmark_grasping_methods.py               (TOPPRA vs CROFT vs contractive)
 ```
+
+The two intercept planners (`_toppra`, `_quintic`) now share a single
+`forward_scan_intercept` in `dg_common.py`, parameterised by a segment-timing
+estimator; `_croft` reuses the same `ee_pos` / `toppra_segment` /
+`solve_grasp_ik` helpers. The previously duplicated `run_grasping_nmpc_toppra.py`
+and `run_grasping_nmpc_croft.py` are merged into `run_grasping_nmpc.py`, which
+selects the planner from the command line.
 
 ## Shared-module design
 
@@ -94,7 +105,7 @@ refactored/
 | `dynamic grasping/intercept planning/quintic/intercept_point_code2.py` | `dynamic_grasping/intercept_planner_quintic.py` |
 | `dynamic grasping/intercept planning/CROFT.py` | `dynamic_grasping/intercept_planner_croft.py` |
 | `dynamic grasping/intercept planning/measure_tp.py` | `dynamic_grasping/measure_tp.py` |
-| `dynamic grasping/intercept planning/TOPPRA_Nmpc_moving_ball.py` | `dynamic_grasping/run_grasping_nmpc_toppra.py` (+ `run_grasping_nmpc_croft.py`) |
+| `dynamic grasping/intercept planning/TOPPRA_Nmpc_moving_ball.py` | `dynamic_grasping/run_grasping_nmpc.py` (`toppra`/`croft` via CLI) |
 | `dynamic grasping/intercept planning/TOPPRA_moving_ball.py` | *(folded into the two NMPC runners)* |
 | `dynamic grasping/intercept planning/quintic/moving_ball.py` | `dynamic_grasping/run_grasping_pid_quintic.py` |
 | `dynamic grasping/benchmark.py` | `dynamic_grasping/benchmark_grasping_methods.py` |
@@ -115,11 +126,12 @@ their generated C code are written next to each build script.
 ## Running
 
 Each script is plain `python <script>.py` from anywhere (it inserts
-`refactored/` on `sys.path`). Build the matching ACADOS solver first:
+`franka_grasping/` on `sys.path`). Build the matching ACADOS solver first:
 
 * `point_stabilization/` → `build_point_stabilization_solver.py`
 * `trajectory_tracking/` → `build_trajectory_tracking_solver.py`
-* `dynamic_grasping/` NMPC runners → `build_solver.py`;
+* `dynamic_grasping/` NMPC runner → `build_solver.py`, then
+  `run_grasping_nmpc.py [toppra|croft]`;
   benchmark → `build_solver.py --planning`;
   contractive runners → `build_contractive_solver.py`
 

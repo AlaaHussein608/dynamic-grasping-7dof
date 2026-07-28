@@ -280,19 +280,21 @@ CROFT-Base catches more often; CROFT-Tracking tightens alignment by **85 %** (va
 
 ```
 .
-├── ALL_CODES/
-│   ├── refractored/              # main, cleaned-up codebase
+├── report.pdf                    # full written thesis report
+├── src/
+│   ├── franka_grasping/          # main, cleaned-up codebase
 │   │   ├── shared/               #   dynamics, both IK solvers, trajectory & control laws,
 │   │   │                         #   ACADOS OCP builder (incl. contractive variant), gripper
 │   │   ├── point_stabilization/  #   regulate to a fixed target (MPC / FL / SMC)
 │   │   ├── trajectory_tracking/  #   track quintic / TOPP-RA references + benchmarks
 │   │   └── dynamic_grasping/     #   intercept-and-grasp: forward scan, CROFT, contractive MPC
+│   │                             #   (dg_common.py holds the shared grasping helpers)
 │   └── xml and meshes/           # Franka MJCF/URDF model + meshes + scene files
 ├── videos/                       # the five MuJoCo demos
 └── docs/images/                  # figures used in this README (report figures + hero frame)
 ```
 
-See [`ALL_CODES/refractored/README.md`](ALL_CODES/refractored/README.md) for a module-by-module description and the old→new file mapping.
+See [`src/franka_grasping/README.md`](src/franka_grasping/README.md) for a module-by-module description and the old→new file mapping.
 
 ---
 
@@ -302,9 +304,9 @@ Each script runs with plain `python <script>.py` from anywhere. Anything using M
 
 ```bash
 # --- dynamic grasping (plan-then-track NMPC) ---
-cd ALL_CODES/refractored/dynamic_grasping
+cd src/franka_grasping/dynamic_grasping
 python build_solver.py               # NMPC solver  (add --planning for the benchmark)
-python run_grasping_nmpc_croft.py    # CROFT + NMPC intercept-and-grasp
+python run_grasping_nmpc.py croft    # CROFT + NMPC intercept-and-grasp
 
 # --- contractive MPC grasping ---
 python build_contractive_solver.py

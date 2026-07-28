@@ -134,7 +134,7 @@ ocp_cython_c: ocp_shared_lib
 	-o acados_ocp_solver_pyx.c \
 	-I $(INCLUDE_PATH)/../interfaces/acados_template/acados_template \
 	$(INCLUDE_PATH)/../interfaces/acados_template/acados_template/acados_ocp_solver_pyx.pyx \
-	-I /home/alaa/ALL_CODES/refractored/dynamic_grasping/franka_point_stab_generated \
+	-I /home/alaa/thesis/src/franka_grasping/dynamic_grasping/franka_point_stab_generated \
 
 ocp_cython_o: ocp_cython_c
 	$(CC) $(ACADOS_FLAGS) -c -O2 \
@@ -163,7 +163,7 @@ sim_cython_c: sim_shared_lib
 	-o acados_sim_solver_pyx.c \
 	-I $(INCLUDE_PATH)/../interfaces/acados_template/acados_template \
 	$(INCLUDE_PATH)/../interfaces/acados_template/acados_template/acados_sim_solver_pyx.pyx \
-	-I /home/alaa/ALL_CODES/refractored/dynamic_grasping/franka_point_stab_generated \
+	-I /home/alaa/thesis/src/franka_grasping/dynamic_grasping/franka_point_stab_generated \
 
 sim_cython_o: sim_cython_c
 	$(CC) $(ACADOS_FLAGS) -c -O2 \
