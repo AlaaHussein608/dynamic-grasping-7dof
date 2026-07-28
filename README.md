@@ -17,12 +17,12 @@ This project builds the *entire* manipulation stack needed to grasp objects that
 1. [Demo Videos](#-demo-videos)
 2. [How It Works: the Build-Up](#-how-it-works-the-build-up)
 3. [System & Simulation](#1-system--simulation)
-4. [Foundations: Kinematics & Dynamics](#2-foundations-kinematics--dynamics)
-5. [Step 1 — Inverse Kinematics](#3-step-1--inverse-kinematics)
-6. [Step 2 — Static Grasping](#4-step-2--static-grasping)
-7. [Step 3 — Trajectory Planning & Tracking Control](#5-step-3--trajectory-planning--tracking-control)
-8. [Step 4 — Dynamic Grasping (three algorithms)](#6-step-4--dynamic-grasping-three-algorithms)
-9. [Step 5 — Gripper Closure & Grasp Stability](#7-step-5--gripper-closure--grasp-stability)
+4. [Kinematic & Dynamic Modelling](#2-kinematic--dynamic-modelling)
+5. [Inverse Kinematics](#3-inverse-kinematics)
+6. [Trajectory Planning](#4-trajectory-planning)
+7. [Manipulator Control](#5-manipulator-control)
+8. [Gripper Mechanics & Static Grasping](#6-gripper-mechanics--static-grasping)
+9. [Dynamic Grasping (three algorithms)](#7-dynamic-grasping-three-algorithms)
 10. [Results at a Glance](#-results-at-a-glance)
 11. [Repository Structure](#-repository-structure)
 12. [Running the Code](#-running-the-code)
@@ -32,17 +32,17 @@ This project builds the *entire* manipulation stack needed to grasp objects that
 
 ## 🎥 Demo Videos
 
-All demos run in MuJoCo: a ball is launched across the workspace and the arm must intercept and grasp it. Files live in [`videos/`](videos/).
+All demos run in MuJoCo: a ball is launched across the floor and the arm must intercept and grasp it. Files live in [`videos/`](videos/).
 
-**Approach A — Plan-then-track.** Compute an interception trajectory once, then track it with a controller. Three planners:
+**Plan-then-track** — compute an interception plan once, then track it with the ACADOS MPC controller:
 
 | Planner | What it does | Video |
 |---|---|---|
 | **Quintic** | Smooth 5th-order polynomial to the intercept pose | [`run_grasping_quintic.mp4`](videos/run_grasping_quintic.mp4) |
-| **TOPP-RA** | Time-optimal parameterisation (fastest feasible) | [`run_grasping_toppra.mp4`](videos/run_grasping_toppra.mp4) |
-| **CROFT** | Accelerated intercept search (~20× fewer solves) | [`run_grasping_croft.mp4`](videos/run_grasping_croft.mp4) |
+| **TOPP-RA** | Time-optimal, torque-limited parameterisation | [`run_grasping_toppra.mp4`](videos/run_grasping_toppra.mp4) |
+| **CROFT** | Accelerated rendezvous-point search + TOPP-RA | [`run_grasping_croft.mp4`](videos/run_grasping_croft.mp4) |
 
-**Approach B — Contractive MPC.** Closed-loop: re-solve an optimal-control problem every step, with a contraction constraint that *guarantees* the gripper gets strictly closer to the object each step.
+**Contractive MPC** — fully online: re-solve an optimal-control problem every step with a per-step error-contraction constraint (no offline planning phase):
 
 | Run | Video |
 |---|---|
@@ -73,7 +73,7 @@ Static grasping proves the IK → planning → control chain works on a *station
 ## 1. System & Simulation
 
 ### Robot — Franka Emika Panda (7-DoF)
-A redundant, torque-controlled research arm: three shoulder joints, one elbow, and a **spherical wrist** (joints 5–7 intersect at a point). That wrist decoupling is exactly what makes a fast *analytical* IK possible. Reach ≈ 855 mm, payload 3 kg, per-joint torque sensing at 1 kHz. End-effector: the **Franka Hand** parallel-jaw gripper (0–80 mm travel, up to 70 N).
+A redundant, torque-controlled research arm: three shoulder joints, one elbow, and a **spherical wrist** (joints 5–7 intersect at a point). That wrist decoupling is exactly what makes a fast *analytical* IK possible. Reach ≈ 855 mm, payload 3 kg, per-joint torque sensing at 1 kHz. End-effector: the **Franka Hand** parallel-jaw gripper (0–80 mm travel).
 
 <p align="center">
   <img src="docs/images/panda_kinematics.png" width="34%" alt="Franka Panda with kinematic link dimensions">
@@ -86,185 +86,180 @@ A redundant, torque-controlled research arm: three shoulder joints, one elbow, a
 | 5–7 | 12 N·m | 2.610 rad/s |
 
 ### Simulator — MuJoCo
-All experiments run in **MuJoCo** (Multi-Joint dynamics with Contact) using the official Franka MJCF model with documented per-link inertias. MuJoCo gives ground-truth state, controllable physics, and scriptable batch experiments.
+All experiments run in **MuJoCo** (Multi-Joint dynamics with Contact) using the official Franka MJCF model with documented per-link inertias. MuJoCo gives ground-truth state, controllable physics, and scriptable batch experiments. The target is a free-floating sphere whose contact with the floor is friction-free, so it slides freely while retaining realistic friction against the gripper pads.
 
-| MuJoCo setting | Value | | Target object (ball) | Value |
+| MuJoCo setting | Value | | Target sphere | Value |
 |---|---|---|---|---|
-| Timestep | 5 ms | | Radius | 30 mm |
-| Integrator | `implicitfast` | | Mass | 50 g |
-| Contact solver | Newton | | Slide friction | 0.8 |
-| Slide friction | 0.8 | | Launch speed | 0.3–0.8 m/s |
+| Timestep | 0.005 s (5 ms) | | Radius | 0.03 m (30 mm) |
+| Solver iterations | 5 | | Mass | 0.1 kg |
+| Line-search iters | 8 | | Body friction (slide/tors./roll) | 1.5 / 0.5 / 0.1 |
+| Integrator | `implicitfast` | | Floor-pair friction | 0 (slides freely) |
+
+<p align="center">
+  <img src="docs/images/fig_2_2.png" width="46%" alt="MuJoCo scene: Franka Panda and spherical target on the floor">
+  <br><em>Figure 2.2 — the MuJoCo scene: Franka Panda with the spherical target on the floor plane.</em>
+</p>
 
 ### Software stack
-Python 3.10 · **[MuJoCo](https://mujoco.org/)** (simulation) · **[Pinocchio](https://github.com/stack-of-tasks/pinocchio)** (FK, Jacobians, RNEA/CRBA) · **[ACADOS](https://docs.acados.org/)** (real-time NMPC via SQP-RTI + HPIPM) · **[TOPP-RA](https://github.com/hungpham2511/toppra)** (time-optimal paths) · **[CasADi](https://web.casadi.org/)** (symbolic diff / offline NLP) · `cc_ik` (closed-form IK) · NumPy / SciPy / Matplotlib.
+Python 3.10 · **[MuJoCo](https://mujoco.org/)** (simulation) · **[Pinocchio](https://github.com/stack-of-tasks/pinocchio)** (runtime FK, Jacobians, RNEA/CRBA) · **[ACADOS](https://docs.acados.org/)** (real-time NMPC via SQP-RTI + HPIPM) · **[TOPP-RA](https://github.com/hungpham2511/toppra)** (time-optimal paths) · **[CasADi](https://web.casadi.org/)** (symbolic dynamics / offline IPOPT NLP) · NumPy / SciPy / Matplotlib.
 
 ---
 
-## 2. Foundations: Kinematics & Dynamics
+## 2. Kinematic & Dynamic Modelling
 
-The whole stack rests on a **Product-of-Exponentials (PoE)** model from screw theory:
+The whole stack rests on a **Product-of-Exponentials (PoE)** model from screw theory, with every joint represented as a screw axis in the space and body frames:
 
-- **Forward kinematics:** `T(θ) = e^{[S₁]θ₁} … e^{[S₇]θ₇} · M`, giving compact closed-form end-effector poses from the 7 joint screw axes and the home configuration `M`.
-- **Velocity kinematics:** the 6×7 space/body **Jacobians** relate joint rates to end-effector twist, and expose the arm's singularities.
-- **Dynamics:** the equation of motion `τ = M(θ)θ̈ + C(θ,θ̇)θ̇ + g(θ) + Dθ̇` is evaluated with the **Recursive Newton–Euler Algorithm (RNEA)** and **CRBA** mass matrix (via Pinocchio) — the same terms feed the computed-torque, SMC, and MPC controllers below.
+- **Forward kinematics:** `T(θ) = e^{[S₁]θ₁} … e^{[S₇]θ₇} · M`, giving compact closed-form end-effector poses from the seven joint screw axes and the home configuration `M`.
+- **Velocity kinematics:** the 6×7 space and body **Jacobians** relate joint rates to the end-effector twist.
+- **Dynamics:** the equation of motion `τ = M(θ)θ̈ + C(θ,θ̇)θ̇ + g(θ) + J(θ)ᵀF_tip + Bθ̇` is built from the **Newton–Euler** recursion in twists and wrenches.
 
-This model is what every later stage calls into: IK inverts it, TOPP-RA respects its torque limits, and the controllers cancel/predict its nonlinearities.
+The analytical model was derived and validated in Python, but a pure-Python evaluation of the inertia matrix alone took ≈ 50 ms/step — over 10× the 5 ms control budget. All *runtime* kinematics and dynamics were therefore handed to **Pinocchio** (C++), which supplies `M(θ)` (CRBA), the bias forces `C θ̇ + g` (RNEA), and the Jacobians in 0.1–0.5 ms/step. Pinocchio feeds the computed-torque, SMC, and MPC controllers below.
 
 ---
 
-## 3. Step 1 — Inverse Kinematics
+## 3. Inverse Kinematics
 
-**Goal:** given a desired gripper pose `T_d`, find joint angles `θ` with `T(θ) = T_d`. Because the arm has 7 joints for 6 task DoF, solutions form a 1-parameter family. Two solvers are implemented and compared:
+**Goal:** given a desired gripper pose `T_d`, find joint angles `θ` with `T(θ) = T_d`. Because the arm has 7 joints for 6 task DoF, solutions form a 1-parameter family (parameterised by the redundant `θ₇`). Two solvers are implemented and compared:
 
-| | **Analytical** (`cc_ik`) | **Numerical** (Pinocchio DLS) |
+| | **Analytical** (frantik) | **Numerical** (Pinocchio DLS) |
 |---|---|---|
-| Method | Closed-form; exploits the spherical wrist, sweeps the redundant `θ₇` | Damped least-squares Jacobian iteration from random seeds |
-| Cost | O(1) trigonometry | Iterative, matrix inverse per step |
-| Robustness near limits | Can fail | Degrades gracefully (damping) |
+| Method | Closed-form; sweeps the redundant `θ₇`, decouples wrist from shoulder | Damped least-squares Jacobian iteration from random seeds |
+| Cost | O(1) trigonometry per seed | Up to 25 iterations per seed |
+| Robustness near singularities | Can fail (e.g. joint 2 → 0) | Degrades gracefully (damping) |
+
+**Study — 500 random reachable poses, seed count swept 1→49.** The results below show the classic speed-vs-reachability trade-off.
 
 <p align="center">
-  <img src="docs/images/ik_analytical_flowchart.png" width="40%" alt="Analytical IK flowchart">
-  <img src="docs/images/ik_numerical_flowchart.png" width="40%" alt="Numerical IK flowchart">
-  <br><em>Left: analytical closed-form solver. Right: numerical damped-least-squares solver.</em>
+  <img src="docs/images/fig_6_1.png" width="60%" alt="IK seed-count sweep: solve time and success rate vs number of seeds">
+  <br><em>Figure 6.1 — IK seed-count sweep (N = 500 poses). Top: mean solve time per query. Bottom: success rate. Blue: analytical (frantik); orange: numerical (Pinocchio-DLS).</em>
 </p>
 
-**Study — 500 random poses, seed count swept 1→49.** The analytical solver reaches **99 % success at 24 seeds in 0.44 ms**; the numerical solver hits 99 % at 13 seeds but at **9.74 ms — 22× slower per call**. Since dynamic-grasping planners call IK repeatedly inside a loop, the analytical solver is used for planning; the numerical one is kept as a near-limit fallback.
-
-<p align="center"><img src="docs/images/ik_seed_sweep.png" width="55%" alt="IK success rate and solve time vs seed count"></p>
-
-| Solver | Seeds @ 99 % | Success | Solve time | Rel. cost |
-|---|:--:|:--:|:--:|:--:|
-| **Analytical (cc_ik)** | 24 | 99.0 % | **0.441 ms** | **1.0×** |
-| Numerical (Pinocchio DLS) | 13 | 99.0 % | 9.737 ms | 22.1× |
-
----
-
-## 4. Step 2 — Static Grasping
-
-Before chasing a moving ball, the pipeline is validated on a **stationary** object. This proves the IK → trajectory → control chain end-to-end. The task is split into four phases:
-
-```
- Phase 1          Phase 2         Phase 3            Phase 4
- Approach   ───►  Descent   ───►  Gripper Closure ─► Lift & Transport
- (pre-grasp,      (100 mm along   (close @ 20 mm/s,  (lift 150 mm, move
-  100 mm above,   approach axis)  10 N target force,  to drop-off pose,
-  quintic traj.)                  contact detection)  quintic traj.)
-```
-
-- **Phase 1 – Approach:** analytical IK (24 seeds) to a pre-grasp pose 100 mm above the object; quintic trajectory to get there.
-- **Phase 2 – Descent:** a short 100 mm Cartesian descent to the grasp pose, as a separate segment for fine positioning.
-- **Phase 3 – Closure:** fingers close at 20 mm/s toward a 10 N grip; contact is detected when finger velocity drops below threshold.
-- **Phase 4 – Lift & transport:** lift 150 mm, then a quintic trajectory to the drop-off pose.
-
-**Validation:** 20 trials across 5 workspace locations (NMPC controller) — **all 20 succeed**, mean approach time 1.8 s (TOPP-RA), **mean grasp alignment error 1.2 mm**.
-
----
-
-## 5. Step 3 — Trajectory Planning & Tracking Control
-
-Grasping needs a *dynamically feasible* joint trajectory and a controller that tracks it accurately.
-
-### Trajectory profiles
-Five profiles are implemented; **TOPP-RA** is the workhorse and **quintic** is the smooth baseline.
-
-| Profile | Continuity | Duration | Limit-aware |
-|---|---|---|---|
-| Trapezoidal | C⁰ vel. | user-set | partial |
-| S-curve (7-stage) | C¹ vel. | user-set | partial |
-| Cubic | C¹ pos. | user-set | no |
-| Quintic | C² pos. | user-set | no |
-| **TOPP-RA** | C⁰ accel. | **optimal** | **yes** |
-
-**TOPP-RA** (Time-Optimal Path Parameterisation via Reachability Analysis) finds the *minimum-time* speed profile along a path subject to joint torque/velocity limits — e.g. ≈ **1.3 s vs 2.3 s** for a comparable quintic. Its trapezoidal-like velocity shape is visible below.
-
-<p align="center"><img src="docs/images/toppra_velocities.png" width="75%" alt="TOPP-RA joint velocities: desired vs actual"></p>
-
-### Controllers
-Three controllers are developed, each cancelling or predicting the model dynamics from Step 2:
-
-| Controller | Idea | Highlight |
-|---|---|---|
-| **Feedback Linearisation** (computed-torque) | Cancel nonlinear dynamics → PD on the error | Tunable damping ζ |
-| **Adaptive SMC** | Sliding surface `s = ė + Λe`; boundary layer kills chatter; gain adapts online | Robust to model error |
-| **Nonlinear MPC** (ACADOS SQP-RTI) | Receding-horizon optimal control (N=20, 0.2 s), one RTI step/cycle | **1–5 ms/step** |
-
-**Feedback linearisation — damping study.** The PD gains set a second-order error response; below is the underdamped (ζ=0.5) case, which converges with oscillation. Critical damping (ζ=1) gives the fastest clean settle (~0.8 s).
-
-<p align="center"><img src="docs/images/fl_block_diagram.png" width="55%" alt="Computed-torque control block diagram"></p>
-<p align="center"><img src="docs/images/fl_tracking_error.png" width="60%" alt="Feedback linearisation per-joint tracking error, underdamped"></p>
-
-**Sliding mode control.** All seven sliding surfaces reach the boundary layer within ~0.3 s, and the commanded torques are smooth (no high-frequency chattering) thanks to the saturation function.
-
-<p align="center">
-  <img src="docs/images/smc_quintic_positions.png" width="75%" alt="SMC joint position tracking on quintic trajectory">
-  <br><em>SMC tracking a quintic trajectory — desired (left) vs actual (right).</em>
-</p>
-<p align="center">
-  <img src="docs/images/smc_sliding_surfaces.png" width="34%" alt="SMC sliding surfaces">
-  <img src="docs/images/smc_torque.png" width="34%" alt="SMC commanded torques">
-  <br><em>Left: sliding surfaces reaching the boundary layer. Right: smooth, chatter-free torques.</em>
-</p>
-
-**MPC point stabilisation.** The MPC regulates the arm to a target and holds it against a 2 N·m disturbance at joint 3; all joints converge within ~1 s, with ACADOS solving each step in 1–5 ms.
-
-<p align="center"><img src="docs/images/mpc_point_stabilisation.png" width="48%" alt="MPC per-joint position error over time"></p>
-
-**Benchmark (50 random trajectories × 3 controllers × 2 profiles):**
-- **MPC** achieves the lowest tracking RMSE (predictive feed-forward), then **SMC**, then **FL**.
-- **TOPP-RA references beat quintic** across *all three* controllers.
-
----
-
-## 6. Step 4 — Dynamic Grasping (three algorithms)
-
-Now the object *moves*. Dynamic grasping is posed as an **intercept-point planning** problem: find an interception time `t*` and pose `T*` the end-effector can reach *before* the object arrives, subject to torque limits. Three algorithms of increasing sophistication were developed and benchmarked.
-
-<p align="center">
-  <img src="docs/images/scene_dynamic_grasp.jpg" width="55%" alt="Dynamic grasping in MuJoCo: arm reaching for the moving green ball">
-  <br><em>Dynamic interception in MuJoCo — the arm converges on the moving green target.</em>
-</p>
-
-**① Baseline intercept planner.** Forward-scan candidate interception times on a 50 ms grid; for each, solve IK and run TOPP-RA until one is feasible. Simple, but up to ~60 TOPP-RA calls in a 3 s window. → *see* [`run_grasping_quintic.mp4`](videos/run_grasping_quintic.mp4), [`run_grasping_toppra.mp4`](videos/run_grasping_toppra.mp4)
-
-**② CROFT — accelerated intercept search.** Key insight: the residual `r(t) = T_traj(t) − (t − t₀)` is *unimodal*, so the scan can be replaced by **bracketed root-finding (bisection)**. It converges in 3–5 iterations → **~20× fewer TOPP-RA evaluations** at equal or better success. → *see* [`run_grasping_croft.mp4`](videos/run_grasping_croft.mp4)
-
-**③ Contractive MPC.** Instead of plan-then-track, it fuses planning and control: every step it solves an OCP with an added **contraction constraint**
-
-```
-‖e(k+1)‖² ≤ α²‖e(k)‖²        (slack-relaxed for feasibility, α ∈ (0,1))
-```
-
-where `e` is the end-effector–to–object distance. This *guarantees geometric convergence* `‖e(k)‖ ≤ αᵏ‖e(0)‖` — the gripper provably gets closer every step — and closes when the gap drops below 15 mm. → *see* [`run_contractive_grasping.mp4`](videos/run_contractive_grasping.mp4), [`run_contractive_grasping2.mp4`](videos/run_contractive_grasping2.mp4)
-
-### Benchmark — 100 trials per algorithm
-
-| Algorithm | Success rate | Notes |
-|---|:--:|---|
-| Baseline intercept planner | 89.8 % | up to ~60 TOPP-RA calls |
-| **CROFT** | **92.3 %** | **~20× cheaper**, best overall trade-off |
-| Contractive MPC | 76.2 % | formal convergence guarantee; more sensitive to fast objects |
-
-**CROFT-Base vs CROFT-Tracking** (open-loop execution vs replanning every 50 ms):
-
-| Variant | Success | Grasp alignment error |
+| Metric (at 95 % success) | Analytical (frantik) | Numerical (Pinocchio-DLS) |
 |---|:--:|:--:|
-| CROFT-Base | 92.5 % | 3.13 mm |
-| CROFT-Tracking | 68.8 % | **0.46 mm** |
+| Seeds to reach 95 % | 42 | 14 |
+| Mean solve time | **0.706 ms** | 10.703 ms |
+| Time per seed | ~0.017 ms | ~0.76 ms |
+| Success ceiling (n = 49) | ~95.4 % | ~99.6 % |
 
-Open-loop CROFT catches more often; replanning aligns far more precisely but occasionally over-corrects and misses the interception window — a clean illustration of the success-rate vs. accuracy trade-off.
+The analytical solver is **~15× faster at the 95 % threshold** (and ~22× faster at 99 %: 0.441 ms vs 9.737 ms), because each seed is a single closed-form evaluation with no iteration. Its success *plateaus* near 95–97 % at singular configurations, whereas the numerical solver keeps improving to 99.6 %. Since the intercept planners call IK repeatedly at real-time rates, the **analytical solver is the default** (a seed count of `n = 8` already balances > 97.5 % success with < 0.2 ms); the numerical solver is kept as a high-reachability fallback.
 
 ---
 
-## 7. Step 5 — Gripper Closure & Grasp Stability
+## 4. Trajectory Planning
 
-Securing the catch is a physics problem, analysed with the **Franka Hand** parallel-jaw model (80 mm aperture, 70 N max, rubber pads, μ ≈ 0.8).
+Trajectories are generated in **joint space** (guaranteeing feasibility and trivially enforcing per-joint limits). Five profiles are implemented; **TOPP-RA** is the workhorse and **quintic** the smooth baseline.
 
-- **Friction cone:** each contact must satisfy `‖fₜ‖ ≤ μ·fₙ` to avoid slip.
-- **Force closure** for the 50 g ball needs only `fₙ > mg/(2μ) = 0.307 N`. The commanded **10 N** grip gives a **~32× safety factor** — the closure is deliberately conservative so a moving catch still holds.
-- **Grasp quality** is scored by the largest inscribed sphere in the friction-wrench space (maximised when the contact normals align through the object's centre of mass).
-- **Closure timing** is the critical link to dynamic grasping: the gripper is triggered when the end-effector–object distance falls below threshold (15 mm in contractive MPC; contact-velocity detection in static grasping). A trial counts as success only if the gripper closes within 5 mm of the object centre **and** holds contact ≥ 200 ms.
+| Profile | Continuity | Duration | Torque-limit aware |
+|---|---|---|:--:|
+| Trapezoidal | C⁰ vel. | min for given v,a | ✗ |
+| S-curve (7-stage) | C¹ vel. | ~3–5 % longer | ✗ |
+| Cubic | C¹ pos. | user-set | ✗ |
+| Quintic | C² pos. | user-set | ✗ |
+| **TOPP-RA** | C⁰ accel. | **provably optimal** | **✓ (hard LP)** |
 
-The grasp moment is visible at the end of every demo video.
+**TOPP-RA** (Time-Optimal Path Parameterisation via Reachability Analysis) turns the joint torque/velocity bounds into scalar constraints on `(s̈, ṡ²)` and solves two passes of small linear programmes, producing the minimum-time profile that saturates the actuator limits. The quintic profile keeps zero velocity *and* acceleration at both endpoints for smoothness.
+
+<p align="center">
+  <img src="docs/images/fig_4_4.png" width="46%" alt="Quintic velocity profile">
+  <img src="docs/images/fig_4_5.png" width="46%" alt="TOPP-RA time-optimal velocity profile">
+  <br><em>Figure 4.4 (quintic) and Figure 4.5 (TOPP-RA). TOPP-RA saturates the velocity and torque limits simultaneously, giving the shortest feasible motion.</em>
+</p>
+
+---
+
+## 5. Manipulator Control
+
+Three controllers are developed, each using the runtime dynamics from Section 2:
+
+| Controller | Idea | Strength |
+|---|---|---|
+| **Feedback Linearisation** (computed torque) | Cancel the nonlinear dynamics → decoupled double integrators driven by a PD law | Simplest; fastest to evaluate (< 0.07 ms) |
+| **Adaptive SMC** | Sliding surface `s = ė + Λe`; boundary-layer saturation removes chatter; switching gain adapts online | Best disturbance rejection |
+| **Nonlinear MPC** (ACADOS SQP-RTI) | Receding-horizon OCP with hard joint/torque constraints; one real-time iteration per step, solved by HPIPM | Best tracking accuracy & lowest energy |
+
+They are validated first on **point stabilisation** (regulate to a fixed target), then on **trajectory tracking** — the same two experiments for all three controllers, for a like-for-like comparison.
+
+### Point stabilisation — regulate to a target
+The arm is driven from home to a large-displacement pre-grasp configuration and must hold it. Per-joint position error over time, one plot per controller:
+
+<p align="center">
+  <img src="docs/images/fig_6_2.png" width="31%" alt="FL point-stabilisation per-joint error">
+  <img src="docs/images/fig_6_9.png" width="31%" alt="SMC point-stabilisation per-joint error">
+  <img src="docs/images/fig_6_17.png" width="31%" alt="MPC point-stabilisation per-joint error">
+  <br><em>Per-joint error vs time — Figure 6.2 (Feedback Linearisation, ζ = 0.5), Figure 6.9 (SMC), Figure 6.17 (MPC). All drive the error to zero; FL under critical damping (ζ = 1) settles cleanly in ~0.8 s, SMC converges monotonically below 1 mrad, and MPC settles all joints in ~0.7 s.</em>
+</p>
+
+### Trajectory tracking — follow a TOPP-RA reference
+The same TOPP-RA reference is tracked by each controller; actual vs desired joint positions:
+
+<p align="center">
+  <img src="docs/images/fig_6_7.png" width="31%" alt="FL trajectory tracking, TOPP-RA">
+  <img src="docs/images/fig_6_14.png" width="31%" alt="SMC trajectory tracking, TOPP-RA">
+  <img src="docs/images/fig_6_19.png" width="31%" alt="MPC trajectory tracking, TOPP-RA">
+  <br><em>Actual vs desired, TOPP-RA profile — Figure 6.7 (FL), Figure 6.14 (SMC), Figure 6.19 (MPC).</em>
+</p>
+
+### Benchmark
+Over **300 target configurations × 2 profiles (TOPP-RA / quintic) × 3 conditions** (nominal, torque disturbance, sensor noise):
+
+| Controller | Nominal RMSE (rad) ↓ | Step time | Disturbance robustness |
+|---|:--:|:--:|:--:|
+| **MPC · TOPP-RA** | **0.00694** | 3.4–3.7 ms | RMSE +4.1 % |
+| SMC · TOPP-RA | 0.01413 | 0.12–0.14 ms | **+1.2 % (best)** |
+| FL · TOPP-RA | 0.01843 | **< 0.07 ms** | +4.3 % |
+
+- **MPC** has the lowest RMSE (≈ 2× better than SMC, 2.7× better than FL) and lowest control energy, and respects all joint limits (0 % violations).
+- **SMC** rejects disturbances best in relative terms; **FL** is the cheapest to compute.
+- Settling times cluster by **planner** (TOPP-RA ≈ 1.13 s vs quintic ≈ 1.85 s) more than by controller — the reference generator matters as much as the control law. **MPC · TOPP-RA** is chosen for the dynamic-grasping experiments.
+
+---
+
+## 6. Gripper Mechanics & Static Grasping
+
+**Grasp mechanics.** Securing the catch is a contact-physics problem, analysed with the **Franka Hand** parallel-jaw model. Each pad must satisfy the Coulomb no-slip condition `Fᵢ ≤ μ_eff·Nᵢ` with `μ_eff = (μ_sphere + μ_finger)/2`, and the minimum normal force to resist gravity is `F_min = mg / (2 μ_eff)`. Closure is **two-phase**: a position-controlled phase closes the fingers to just above the sphere diameter, then a force-regulated phase squeezes until the measured contact force exceeds `F_min`. For a parallel-jaw grasp on a sphere the grasp matrix has rank 1 under frictionless contact, rising to **rank 6 (force closure)** once friction and sufficient normal force are applied.
+
+<p align="center">
+  <img src="docs/images/fig_5_3.png" width="52%" alt="Franka Hand gripper and contact geometry on the sphere">
+  <img src="docs/images/fig_6_20.png" width="40%" alt="Gripper closure experiment: force and position vs time">
+  <br><em>Figure 5.3 — gripper contact geometry; Figure 6.20 — the two-phase closure experiment (finger position/velocity and the normal-force ramp to F_min).</em>
+</p>
+
+**Static grasping.** Before chasing a moving ball, the full pipeline is validated on a *stationary* sphere in four phases — **approach** to a pre-grasp pose above the object, **descent** to the grasp pose, **two-phase gripper closure**, and **lift & transport** to a drop-off. Across ball positions spread over the reachable workspace, the arm intercepted and relocated the sphere in every tested configuration, confirming the kinematics → planning → control → gripper chain works end-to-end.
+
+---
+
+## 7. Dynamic Grasping (three algorithms)
+
+Now the object *moves*. Dynamic grasping is posed as **intercept-point (rendezvous) planning**: find an interception time `t*` and a grasp pose the arm can reach *before* the ball arrives, subject to torque limits. Three algorithms of increasing sophistication were developed and benchmarked — see the [demo videos](#-demo-videos).
+
+**① Feasible Intercept Search (forward scan).** Scan candidate rendezvous times from `t_min` in 50 ms steps; at each, predict the ball position, check the workspace, solve IK for the pre-grasp and grasp poses, and estimate quintic segment durations. Return the first time satisfying `T₁ + T₂ + T_grip + ε ≤ t`. Simple but does a dense scan of expensive evaluations.
+
+**② CROFT — accelerated rendezvous search.** Treats interception as root-finding on the feasibility residual `f(t) = T_arm(t) + T_grip − t` (the arm makes it iff `f(t) ≤ 0`, i.e. where the arm-arrival time `r(t)` meets the line `h(t) = t`). Instead of a dense scan it computes the **reachable window**, seeds both ends, then fits a low-order **surrogate `r(t)`** and takes the earliest root of `r(t) = t`, scoring candidates by an **interception-time objective**. It stops on a **temporal-convergence** test (don't plan longer than the improvement is worth) plus a 2-worsening counter, and runs TOPP-RA *inside* each evaluation so the returned trajectory already respects the limits.
+
+**③ Contractive MPC.** Fully online — no offline plan. Every MPC step appends a per-step **contraction constraint** on the joint-position error:
+
+```
+‖q(k) − q_ref‖ ≤ α · ‖q(k−1) − q_ref‖ ,   α = max(α_req, α_min)
+```
+
+with `α_req = (ε/‖e‖)^{1/N}` (the rate needed to reach tolerance `ε` in `N` steps) and `α_min` the physical feasibility floor set by the joint velocity limits. This gives a provable bound `‖e_k‖ ≤ αᵏ‖e₀‖` — the error contracts geometrically every step — while the intercept is refreshed from the live ball state.
+
+### Benchmark — 200 ball launches (reaching the workspace)
+
+| Algorithm | Success rate ↑ | Catch time | Grasp error | Notes |
+|---|:--:|:--:|:--:|---|
+| Feasible Intercept Search | 89.8 % | 3.53 s | 3.22 mm | dense forward scan |
+| **CROFT** | **92.5 %** | 3.42 s | **3.14 mm** | surrogate search (~0.16 s), best overall |
+| Contractive MPC | 76.2 % | **2.52 s** | 3.85 mm | fully online, no planning phase; higher jerk |
+
+**CROFT-Base vs CROFT-Tracking** — an add-on that re-solves the grasp pose from the live ball state during closure:
+
+| Variant | Success | Grasp distance error |
+|---|:--:|:--:|
+| CROFT-Base (open-loop) | 92.5 % | 3.13 mm |
+| CROFT-Tracking (re-plan during closure) | 68.8 % | **0.462 mm** |
+
+CROFT-Base catches more often; CROFT-Tracking tightens alignment by **85 %** (valuable for sub-5 mm objects) but its continuous re-solve occasionally misses the interception window — a clean success-rate vs. accuracy trade-off.
 
 ---
 
@@ -272,12 +267,12 @@ The grasp moment is visible at the end of every demo video.
 
 | Stage | Key result |
 |---|---|
-| **Inverse kinematics** | Analytical solver **22× faster** than numerical at equal 99 % accuracy (0.44 ms vs 9.74 ms). |
-| **Static grasping** | 20/20 trials succeed; **1.2 mm** mean grasp alignment. |
-| **Trajectory planning** | TOPP-RA ≈ **40 % shorter** motion times than quintic under the same limits. |
-| **Control** | MPC lowest RMSE; ACADOS solves in **1–5 ms/step** (vs 50–300 ms offline CasADi/IPOPT). |
-| **Dynamic grasping** | **CROFT 92.3 %** success at **~20× lower** planning cost than the baseline. |
-| **Gripper closure** | 10 N grip → **~32× force-closure safety factor** on the 50 g target. |
+| **Inverse kinematics** | Analytical solver **~15× faster** at 95 % success (0.706 ms vs 10.703 ms), ~22× at 99 %. |
+| **Trajectory planning** | TOPP-RA is provably time-optimal and torque-limited; settles ≈ 1.13 s vs ≈ 1.85 s for quintic. |
+| **Control** | **MPC** lowest RMSE (0.00694 rad) & energy; **SMC** best disturbance rejection; **FL** fastest (< 0.07 ms/step). |
+| **Static grasping** | Four-phase pick-and-place validated across the reachable workspace. |
+| **Dynamic grasping** | **CROFT 92.5 %** success at ≈ 0.16 s planning; Contractive MPC fully online (2.52 s catch). |
+| **Gripper** | Two-phase closure to `F_min = mg/(2 μ_eff)`; grasp matrix reaches rank 6 (force closure). |
 
 ---
 
@@ -289,12 +284,12 @@ The grasp moment is visible at the end of every demo video.
 │   ├── refractored/              # main, cleaned-up codebase
 │   │   ├── shared/               #   dynamics, both IK solvers, trajectory & control laws,
 │   │   │                         #   ACADOS OCP builder (incl. contractive variant), gripper
-│   │   ├── point_stabilization/  #   Step 3: regulate to a fixed target (MPC / FL / SMC)
-│   │   ├── trajectory_tracking/  #   Step 3: track quintic / TOPP-RA references + benchmarks
-│   │   └── dynamic_grasping/     #   Step 4: baseline, CROFT, contractive-MPC + benchmark
+│   │   ├── point_stabilization/  #   regulate to a fixed target (MPC / FL / SMC)
+│   │   ├── trajectory_tracking/  #   track quintic / TOPP-RA references + benchmarks
+│   │   └── dynamic_grasping/     #   intercept-and-grasp: forward scan, CROFT, contractive MPC
 │   └── xml and meshes/           # Franka MJCF/URDF model + meshes + scene files
 ├── videos/                       # the five MuJoCo demos
-└── docs/images/                  # figures used in this README
+└── docs/images/                  # figures used in this README (report figures + hero frame)
 ```
 
 See [`ALL_CODES/refractored/README.md`](ALL_CODES/refractored/README.md) for a module-by-module description and the old→new file mapping.
@@ -306,12 +301,12 @@ See [`ALL_CODES/refractored/README.md`](ALL_CODES/refractored/README.md) for a m
 Each script runs with plain `python <script>.py` from anywhere. Anything using MPC needs its **ACADOS solver built first**:
 
 ```bash
-# --- Step 4: dynamic grasping (plan-then-track NMPC) ---
+# --- dynamic grasping (plan-then-track NMPC) ---
 cd ALL_CODES/refractored/dynamic_grasping
 python build_solver.py               # NMPC solver  (add --planning for the benchmark)
 python run_grasping_nmpc_croft.py    # CROFT + NMPC intercept-and-grasp
 
-# --- Step 4: contractive MPC grasping ---
+# --- contractive MPC grasping ---
 python build_contractive_solver.py
 python run_contractive_grasping.py
 
@@ -325,6 +320,6 @@ python benchmark_grasping_methods.py
 
 ## 👥 Authors
 
-**Alaa Hussein** · **Haidar Saad**
+**Alaa Hussein** · **Haidar Saad** — supervised by **PhD Essa Alghannam**, Manara University, Faculty of Engineering (Robotics and Intelligent Systems), 2025/2026.
 
-Graduation thesis — *Dynamic Object Grasping Using a 7-DoF Manipulator*. The full written report (all derivations, proofs, and complete result tables) accompanies this repository.
+The full written report (all derivations, proofs, and complete result tables) accompanies this project.
